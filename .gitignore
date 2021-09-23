@@ -1,0 +1,5 @@
+*password*
+conf/iptables_rules.sh
+.vscode
+docker-compose.j2.yaml
+generate.sh

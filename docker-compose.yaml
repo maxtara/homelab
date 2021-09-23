@@ -1,0 +1,244 @@
+version: "3.8"
+
+services:
+
+  # Pihole image. Runs DHCP server for network
+  pihole:
+    container_name: pihole
+    image: pihole/pihole:latest
+    restart: unless-stopped
+    environment:
+      TZ: 'Zulu' # Put your own timezone here.
+      WEBPASSWORD: 'pass' 
+    network_mode: host # We'll use host networking. It does do a lot of networking and broadcasts
+    volumes: # pihole and dhcp config to survive redos
+      - '/etc/pihole/:/etc/pihole/'
+      - '/etc/dnsmasq.d/:/etc/dnsmasq.d/'
+    cap_add:
+      - NET_ADMIN # Required for the DHCP server
+
+  # max_aqi - Polls my USB Air quality monitor. Ironically doesnt calculate AQI, I do that in grafana
+  max_aqi:
+    container_name: max_aqi
+    image: maxtara/sds-mqtt
+    restart: unless-stopped
+    devices:
+        - /dev/ttyUSB0
+    environment:
+      MQTT_HOST: 'mosquitto'
+      MQTT_PASSWORD: pass
+      MQTT_USERNAME: 'user'
+      MQTT_PORT: "1883"
+      MQTT_TOPIC: 'home/pmsensor/main'
+      SERIAL_PORT: "/dev/ttyUSB0"
+  
+  # max_sucks - controls my robot vacuum cleaner every day
+  max_sucks:
+    container_name: max_sucks
+    image: maxtara/sucks
+    restart: unless-stopped
+    environment:
+      SUCKS_EMAIL: user@example.com
+      SUCKS_PASSWORD: pass
+      SUCKS_CC: au
+      SUCKS_CONT: eu
+
+  # Telegraf - server metrics output
+  telegraf:
+    depends_on:  
+      - influxdb
+    container_name: telegraf
+    image: telegraf
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      HOST_PROC: /rootfs/proc
+      HOST_SYS: /rootfs/sys
+      HOST_ETC: /rootfs/etc
+    hostname: localhost
+    volumes:
+    # - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /sys:/rootfs/sys:ro
+    - /proc:/rootfs/proc:ro
+    - /etc:/rootfs/etc:ro
+    
+  # CoreDNS - DOT proxy 
+  coredns:
+    depends_on:   
+      - pihole
+    container_name: coredns_up
+    image: "coredns/coredns"
+    restart: unless-stopped
+    ports:
+      - "5553:53/udp"
+      - "5553:53"
+    volumes:
+      - "/etc/coredns/:/etc/coredns/"
+    command: -conf /etc/coredns/coreconfig-up
+
+  # influxdb - metrics database
+  influxdb:
+    depends_on: 
+      - pihole
+    container_name: influxdb
+    image: influxdb:1.8 # TODO fork?
+    restart: unless-stopped
+    volumes:
+      - /home/user/influxdb:/var/lib/influxdb:rw
+    ports:
+      - "8086:8086"
+
+  # Grafana - metrics dashboard
+  grafana:
+    depends_on:
+      - influxdb
+    container_name: grafana
+    image: grafana/grafana:latest # TODO fork?
+    restart: unless-stopped
+    user: "1000"
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,briangann-gauge-panel,natel-plotly-panel,grafana-simple-json-datasource,blackmirror1-singlestat-math-panel
+      - GF_LOG_MODE=console file
+      - GF_SERVER_ROOT_URL=https://192.168.1.1:3000/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+    volumes:
+      - /home/user/grafana:/var/lib/grafana 
+
+  ftp:
+    container_name: ftp
+    image: maxtara/docker-alpine-ftp-server:latest
+    restart: unless-stopped
+    privileged: true # I tried to make this, couldnt figure it out. Got user/pid working. Tried adding every CAP_XXX, no luck.
+    volumes:
+      - /home/user/ftp/:/home/user/ftp/:rw
+    ports:
+      - "18554:21"
+      - "21000-21010:21000-21010"
+    environment:
+      - USERS=user|pass|/home/user/ftp|1000
+
+  mosquitto:
+    container_name: mosquitto
+    image: eclipse-mosquitto
+    restart: unless-stopped
+    user: "1000:1000"
+    ports:
+      - 1883:1883
+      - 1884:1884
+      - 8883:8883
+      - 8884:8884
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /home/user/mosquitto/:/mosquitto/
+
+  zigbee2mqtt:
+    depends_on:
+      - mosquitto
+    container_name: zigbee2mqtt
+    image: koenkk/zigbee2mqtt # taken from www.zigbee2mqtt.io/information/docker.html TODO fork?
+    restart: unless-stopped
+    volumes:
+      - /home/user/zigbee2mqtt/:/app/data
+      - /run/udev:/run/udev:ro
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+    privileged: true # taken from www.zigbee2mqtt.io/information/docker.html. TODO, this required?
+
+  zigbee2mqttassistant:
+    depends_on:
+      - zigbee2mqtt
+    container_name: zigbee2mqttassistant
+    image: carldebilly/zigbee2mqttassistant
+    restart: unless-stopped
+    ports:
+      - 8881:8880
+      - 8882:80
+    environment:
+      - Z2MA_SETTINGS__MQTTSERVER=192.168.1.1
+      - Z2MA_SETTINGS__MQTTUSERNAME=user
+      - Z2MA_SETTINGS__MQTTPASSWORD=pass
+
+  portainer:
+    container_name: portainer
+    image: portainer/portainer
+    ports:
+      - 9000:9000
+    volumes:
+      - /home/user/portainer/:/data:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: "no" # because the exit code(s) are wrong
+
+
+  homeassistant:
+    depends_on:
+      - influxdb
+      - portainer
+      - zigbee2mqttassistant
+    container_name: homeassistant
+    image: homeassistant/home-assistant:latest # TODO fork?
+    restart: unless-stopped
+    privileged: true # Needed for some HA features
+    network_mode: host # required for upnp, port scanning, IPP etc.
+    command: [ "python", "-m", "homeassistant", "--config", "/config", "--log-rotate-days", '3' ]
+    volumes:
+      - /home/user/homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
+  nginx:
+    container_name: nginx
+    image: nginx # TODO fork?
+    restart: unless-stopped
+    ports:
+      - 443:443
+    volumes:
+      - /home/user/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - /home/user/nginx/ssl/:/etc/ssl/private/
+
+  unifi:
+    image: ryansch/unifi-rpi:latest
+    container_name: unifi
+    restart: always
+    network_mode: host
+    volumes:
+      # Unifi v5.0.7 creates all of these directories (some remain empty)
+      - /home/user/unifi/unify_unifyconfig:/var/lib/unifi
+      - /home/user/unifi/unify_unifylog:/usr/lib/unifi/logs
+      - /home/user/unifi/unify_unifylog2:/var/log/unifi
+      - /home/user/unifi/unify_unifyrun:/usr/lib/unifi/run
+      - /home/user/unifi/unify_unifyrun2:/run/unifi
+      - /home/user/unifi/unify_unifywork:/usr/lib/unifi/work
+
+  reoyolo:
+    depends_on:
+      - homeassistant
+    image: maxtara/reoyolo
+    restart: unless-stopped
+    container_name: reoyolo
+    ports:
+        - "2223:2223"
+    volumes:
+        - '/home/user/ftp/:/data'
+        - '/home/user/homeassistant/www:/www'
+    environment:
+        - PROCESS_DIR=/data/reolink/
+        - OUTPUT_DIR=/data/reolink_out/
+        - ORIG_DIR=/data/reolink_orig/
+        - CUTS_DIR=/data/reolink_cuts/
+        - IMAGE_URL=https://192.168.1.1/cgi-bin/api.cgi?cmd=Snap&amp;channel=0&amp;rs=rs&amp;user=admin&amp;password=pass
+        - NOTIFY_DIR=/www/
+        - YOLO_WEIGHTS_LARGE=/code/yolov4.weights
+        - YOLO_CFG_LARGE=/code/yolov4.cfg 
+        - YOLO_WEIGHTS=/code/yolov4-tiny.weights
+        - YOLO_CFG=/code/yolov4-tiny.cfg
+        - YOLO_NAMES=/code/coco.names
+        - DOMAIN=https://example.com
+        - SERVICE=mobile_app_phone
+        - TOKEN=Bearer aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        - REOYOLOENV=yes
+
+        
