@@ -26,6 +26,8 @@ And some custom images, on github
 ## Raspberry pi docker notes
       
 ```
+export DOCKER_CLIENT_TIMEOUT=120
+export COMPOSE_HTTP_TIMEOUT=120
 # Login
 export DOCKER_HOST=ssh://pi
 # Start
@@ -34,6 +36,12 @@ docker-compose -p max up -d --remove-orphans
 docker-compose -p max pull
 # Stop
 docker-compose -p max down --remove-orphans
+
+# Update a single image. Pull Latest, Stop, remove, start (all)
+docker-compose -p max pull
+docker stop unifi
+docker rm unifi
+docker-compose -p max up -d --remove-orphans
 
 ```
   
@@ -52,4 +60,18 @@ apt-get update && apt-get upgrade
 curl -sSL https://get.docker.com | sh
 sudo reboot
 
+```
+  
+### Setup rclone/onedrive
+```
+# Need to configure rclone seperately, as onedrive uses oauth url redirection
+  docker run -i -t --rm \
+    --volume /home/pi/rclone/config:/config/rclone \
+    --volume /etc/passwd:/etc/passwd:ro --volume /etc/group:/etc/group:ro \
+    --device /dev/fuse \
+    rclone/rclone config
+
+# Dont use 'autoconfig' option at the end, and it'll give you instructions. Basically run
+  .\rclone.exe authorize "onedrive"
+On a machine with a browser. Its a single binary
 ```
