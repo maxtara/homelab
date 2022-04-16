@@ -241,4 +241,17 @@ services:
         - TOKEN=Bearer aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         - REOYOLOENV=yes
 
+  onedrive:
+    image: rclone/rclone
+    container_name: onedrive
+    volumes:
+      - /home/pi/rclone/config:/config/rclone
+      - /home/pi/ftp/:/data
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
+    devices:
+        - /dev/fuse
+    command: "sh -c 'rclone --bwlimit 50K move --progress /data/ onedrive:pi && sleep 1h'"
+    entrypoint: []
+    restart: always
         
