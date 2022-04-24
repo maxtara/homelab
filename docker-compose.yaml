@@ -164,9 +164,9 @@ services:
 
   portainer:
     container_name: portainer
-    image: portainer/portainer
+    image: portainer/portainer-ce
     ports:
-      - 9000:9000
+      - 9443:9443
     volumes:
       - /home/user/portainer/:/data:rw
       - /var/run/docker.sock:/var/run/docker.sock
