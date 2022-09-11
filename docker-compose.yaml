@@ -1,4 +1,4 @@
-version: "3.8"
+version: "3.7"
 
 services:
 
@@ -57,7 +57,7 @@ services:
       HOST_ETC: /rootfs/etc
     hostname: localhost
     volumes:
-    # - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    - /home/user/telegraf.conf:/etc/telegraf/telegraf.conf:ro
     - /var/run/docker.sock:/var/run/docker.sock:ro
     - /sys:/rootfs/sys:ro
     - /proc:/rootfs/proc:ro
@@ -78,6 +78,12 @@ services:
     command: -conf /etc/coredns/coreconfig-up
 
   # influxdb - metrics database
+  # To clear out telegraf - rm -rf ./data/telegraf/autogen/*
+  # docker exec -it influxdb influx # CLI
+  # use
+  # CREATE RETENTION POLICY telegrafrd ON telegraf DURATION 31d REPLICATION 1
+  # ALTER RETENTION POLICY telegrafrd ON telegraf DURATION 31d  DEFAULT
+  # show retention policies
   influxdb:
     depends_on: 
       - pihole
@@ -88,13 +94,19 @@ services:
       - /home/user/influxdb:/var/lib/influxdb:rw
     ports:
       - "8086:8086"
+      - "8083:8083"
+    environment:
+      - INFLUXDB_MONITOR_STORE_ENABLED=false
+      - INFLUXDB_DATA_CACHE_MAX_MEMORY_SIZE=512m
+      - INFLUXDB_DATA_MAX_CONCURRENT_COMPACTIONS=2
+      - INFLUXDB_SUBSCRIBER_ENABLED=false
 
   # Grafana - metrics dashboard
   grafana:
     depends_on:
       - influxdb
     container_name: grafana
-    image: grafana/grafana:latest # TODO fork?
+    image: grafana/grafana:main # TODO fork?
     restart: unless-stopped
     user: "1000"
     ports:
@@ -133,7 +145,9 @@ services:
       - 8884:8884
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - /home/user/mosquitto/:/mosquitto/
+      - /home/user/mosquitto/data:/mosquitto/data
+      - /home/user/mosquitto/log:/mosquitto/log
+      - /home/user/mosquitto/config:/mosquitto/config
 
   zigbee2mqtt:
     depends_on:
@@ -200,7 +214,7 @@ services:
       - /home/user/nginx/ssl/:/etc/ssl/private/
 
   unifi:
-    image: ryansch/unifi-rpi:latest
+    image: ryansch/unifi-rpi:7.0 # New versions dont work on my pi, they dropped support for armv7, due to Mongodb dropping support :(
     container_name: unifi
     restart: always
     network_mode: host
@@ -240,13 +254,16 @@ services:
         - SERVICE=mobile_app_phone
         - TOKEN=Bearer aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         - REOYOLOENV=yes
+        - REOYOLO_PLATE_REGION=cc
+        - REOYOLO_PLATE_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        - 'REOYOLO_PLATE_PEOPLE={}'
 
   onedrive:
     image: rclone/rclone
     container_name: onedrive
     volumes:
-      - /home/pi/rclone/config:/config/rclone
-      - /home/pi/ftp/:/data
+      - /home/user/rclone/config:/config/rclone
+      - /home/user/ftp/:/data
       - /etc/passwd:/etc/passwd:ro
       - /etc/group:/etc/group:ro
     devices:
@@ -255,3 +272,16 @@ services:
     entrypoint: []
     restart: always
         
+  beats:
+    container_name: beats
+    image: maxtara/beats
+    restart: unless-stopped
+    volumes:
+      - /home/user/beats/:/etc/beats/
+    environment:
+      - DATE_OF_PURCHSE=2022-01-01 00:00:00
+      - OATH_FILE_LOCATION=/etc/beats/fitbit_oauth.json
+      - INFLUXDBPASSWORD=admin
+      - INFLUXDBUSERNAME=admin
+      - INFLUXDBIP=192.168.1.1
+      - INFLUXDB_DB=fitbit
